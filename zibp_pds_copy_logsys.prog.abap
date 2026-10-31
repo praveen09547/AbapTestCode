@@ -278,36 +278,62 @@ CLASS lcl_copy_app IMPLEMENTATION.
 
 
   METHOD copy_table.
-    "Reading in packages (PACKAGE SIZE) caps the memory transferred
-    "per RFC call and keeps the cursor open server-side between packages.
+    "Two-pass design to avoid dump 'Cursor already closed':
+    "  WAIT UNTIL (inside start_task) causes the ABAP runtime to process
+    "  queued events, which closes any open DB cursor.  Dispatching inside
+    "  SELECT...ENDSELECT therefore triggers this dump under parallel load.
+    "Pass 1 - read all packages into memory (no WAIT, cursor stays open).
+    "Pass 2 - dispatch each collected package (WAIT is safe; cursor closed).
+
     CASE iv_table.
 
       WHEN '/IBP/SOSHEAD_EXT'.
-        DATA lt_head TYPE tt_soshead.
+        TYPES tt_pkgs_head TYPE TABLE OF tt_soshead WITH DEFAULT KEY.
+        DATA: lt_pkgs_head TYPE tt_pkgs_head,
+              lt_head      TYPE tt_soshead.
+        "Pass 1: collect
         SELECT * FROM /ibp/soshead_ext
           WHERE logsys = @c_source AND zzappl = @c_zzappl
           INTO TABLE @lt_head PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_head ) ).
-          dispatch_soshead( lt_head ).
+          APPEND lt_head TO lt_pkgs_head.
         ENDSELECT.
+        "Pass 2: dispatch (cursor is now closed)
+        LOOP AT lt_pkgs_head INTO lt_head.
+          dispatch_soshead( lt_head ).
+        ENDLOOP.
 
       WHEN '/IBP/SOSBOM_EXT'.
-        DATA lt_bom TYPE tt_sosbom.
+        TYPES tt_pkgs_bom TYPE TABLE OF tt_sosbom WITH DEFAULT KEY.
+        DATA: lt_pkgs_bom TYPE tt_pkgs_bom,
+              lt_bom      TYPE tt_sosbom.
+        "Pass 1: collect
         SELECT * FROM /ibp/sosbom_ext
           WHERE logsys = @c_source AND zzappl = @c_zzappl
           INTO TABLE @lt_bom PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_bom ) ).
-          dispatch_sosbom( lt_bom ).
+          APPEND lt_bom TO lt_pkgs_bom.
         ENDSELECT.
+        "Pass 2: dispatch (cursor is now closed)
+        LOOP AT lt_pkgs_bom INTO lt_bom.
+          dispatch_sosbom( lt_bom ).
+        ENDLOOP.
 
       WHEN '/IBP/SOSACT_EXT'.
-        DATA lt_act TYPE tt_sosact.
+        TYPES tt_pkgs_act TYPE TABLE OF tt_sosact WITH DEFAULT KEY.
+        DATA: lt_pkgs_act TYPE tt_pkgs_act,
+              lt_act      TYPE tt_sosact.
+        "Pass 1: collect
         SELECT * FROM /ibp/sosact_ext
           WHERE logsys = @c_source AND zzappl = @c_zzappl
           INTO TABLE @lt_act PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_act ) ).
-          dispatch_sosact( lt_act ).
+          APPEND lt_act TO lt_pkgs_act.
         ENDSELECT.
+        "Pass 2: dispatch (cursor is now closed)
+        LOOP AT lt_pkgs_act INTO lt_act.
+          dispatch_sosact( lt_act ).
+        ENDLOOP.
 
     ENDCASE.
   ENDMETHOD.
