@@ -32,7 +32,7 @@ REPORT zibp_pds_copy_logsys.
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-b01.
 PARAMETERS:
   "-- RFC server group that provides the parallel work processes (RZ12)
-  p_group TYPE rzlli_apcl      DEFAULT 'parallel_generators',
+  p_group TYPE c LENGTH 20     DEFAULT 'parallel_generators',
   "-- Number of rows dispatched to each parallel work process
   p_pkg   TYPE i               DEFAULT 100000,
   "-- Maximum number of parallel work processes to use simultaneously
@@ -89,7 +89,7 @@ CLASS lcl_copy_app DEFINITION.
       "! @parameter iv_test  | ABAP_TRUE = count only, no DB writes.
       constructor
         IMPORTING
-          iv_group  TYPE rzlli_apcl
+          iv_group  TYPE c LENGTH 20
           iv_pkg    TYPE i
           iv_npar   TYPE i
           iv_test   TYPE abap_bool,
@@ -119,7 +119,7 @@ CLASS lcl_copy_app DEFINITION.
       c_zzappl TYPE c LENGTH 1 VALUE '1'.
 
     DATA:
-      mv_group    TYPE rzlli_apcl,
+      mv_group    TYPE c LENGTH 20,
       mv_pkg      TYPE i,
       mv_npar     TYPE i,         "max concurrent tasks
       mv_test     TYPE abap_bool,
@@ -464,7 +464,7 @@ ENDCLASS.
 *& definitions directly from the system (RZ12) without relying on a
 *& specific database table.
 *&---------------------------------------------------------------------*
-FORM f4_rfc_group CHANGING cv_group TYPE rzlli_apcl.
+FORM f4_rfc_group CHANGING cv_group TYPE c.
   CALL FUNCTION 'RFC_SERVER_GROUP_F4'
     CHANGING
       group_name     = cv_group
