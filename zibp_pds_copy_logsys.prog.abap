@@ -1,19 +1,16 @@
 *&---------------------------------------------------------------------*
 *& Report ZIBP_PDS_COPY_LOGSYS
 *&---------------------------------------------------------------------*
-*& Purpose : Copy IBP source-of-supply (PDS) data from one logical
-*&           system to another.  Reads records for the source logical
-*&           system (default 'EDI') from
+*& Purpose : Copy IBP source-of-supply (PDS) data from logical system
+*&           EDI to TDS.  Reads records from
 *&                 /IBP/SOSHEAD_EXT
 *&                 /IBP/SOSBOM_EXT
 *&                 /IBP/SOSACT_EXT
-*&           and creates copies carrying the target logical system
-*&           (default 'TDS').
+*&           and creates copies carrying LOGSYS = 'TDS'.
 *&
-*&           Existing target-LOGSYS records are deleted first, then the
-*&           copies are inserted.  Insertion is distributed across free
-*&           application-server work processes using the SPBT parallel
-*&           processing framework to optimise the runtime.
+*&           Existing TDS records are deleted first, then copies are
+*&           inserted.  Insertion is distributed across work processes
+*&           using the SPBT parallel processing framework.
 *&
 *& Note    : LOGSYS is part of the primary key of all three tables, so a
 *&           source row and its copy have different keys - flipping
@@ -27,16 +24,17 @@ REPORT zibp_pds_copy_logsys.
 *&---------------------------------------------------------------------*
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-b01.
 PARAMETERS:
-  p_src   TYPE logsys          DEFAULT 'EDI' OBLIGATORY,
-  p_tgt   TYPE logsys          DEFAULT 'TDS' OBLIGATORY.
+  p_group TYPE rzlli_apcl      DEFAULT 'parallel_generators',
+  p_pkg   TYPE i               DEFAULT 100000,
+  p_npar  TYPE i               DEFAULT 1,
+  p_test  TYPE abap_bool AS CHECKBOX.
 SELECTION-SCREEN END OF BLOCK b1.
 
-SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-b02.
-PARAMETERS:
-  p_group TYPE rzlli_apcl      DEFAULT 'parallel_generators',
-  p_pkg   TYPE i               DEFAULT 5000,
-  p_test  TYPE abap_bool AS CHECKBOX.
-SELECTION-SCREEN END OF BLOCK b2.
+*&---------------------------------------------------------------------*
+*& F4 help for RFC server group - reads live values from table RZLLI
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_group.
+  PERFORM f4_rfc_group CHANGING p_group.
 
 *&---------------------------------------------------------------------*
 *& Table types over the DB structures (IBP does not necessarily deliver
@@ -76,10 +74,9 @@ CLASS lcl_copy_app DEFINITION.
     METHODS:
       constructor
         IMPORTING
-          iv_source TYPE logsys
-          iv_target TYPE logsys
           iv_group  TYPE rzlli_apcl
           iv_pkg    TYPE i
+          iv_npar   TYPE i
           iv_test   TYPE abap_bool,
       run,
       "! Called back (via FORM) when a parallel task finishes.
@@ -90,13 +87,14 @@ CLASS lcl_copy_app DEFINITION.
 
   PRIVATE SECTION.
     CONSTANTS:
-      c_fm TYPE rs38l_fnam VALUE 'Z_IBP_PDS_COPY_LOGSYS_PAR'.
+      c_fm     TYPE rs38l_fnam VALUE 'Z_IBP_PDS_COPY_LOGSYS_PAR',
+      c_source TYPE logsys     VALUE 'EDI',
+      c_target TYPE logsys     VALUE 'TDS'.
 
     DATA:
-      mv_source   TYPE logsys,
-      mv_target   TYPE logsys,
       mv_group    TYPE rzlli_apcl,
       mv_pkg      TYPE i,
+      mv_npar     TYPE i,
       mv_test     TYPE abap_bool,
       mv_max_wp   TYPE i,
       mv_free_wp  TYPE i,
@@ -135,10 +133,9 @@ ENDCLASS.
 CLASS lcl_copy_app IMPLEMENTATION.
 
   METHOD constructor.
-    mv_source = iv_source.
-    mv_target = iv_target.
     mv_group  = iv_group.
-    mv_pkg    = COND #( WHEN iv_pkg > 0 THEN iv_pkg ELSE 5000 ).
+    mv_pkg    = COND #( WHEN iv_pkg  > 0 THEN iv_pkg  ELSE 100000 ).
+    mv_npar   = COND #( WHEN iv_npar > 0 THEN iv_npar ELSE 1 ).
     mv_test   = iv_test.
   ENDMETHOD.
 
@@ -185,34 +182,34 @@ CLASS lcl_copy_app IMPLEMENTATION.
 
     " SOSHEAD ------------------------------------------------------------
     IF mv_test = abap_false.
-      DELETE FROM /ibp/soshead_ext WHERE logsys = @mv_target.
+      DELETE FROM /ibp/soshead_ext WHERE logsys = @c_target.
       lv_del = sy-dbcnt.
       COMMIT WORK AND WAIT.
     ELSE.
       SELECT COUNT(*) FROM /ibp/soshead_ext
-        WHERE logsys = @mv_target INTO @lv_del.
+        WHERE logsys = @c_target INTO @lv_del.
     ENDIF.
     add_stat( iv_table = '/IBP/SOSHEAD_EXT' iv_deleted = lv_del ).
 
     " SOSBOM -------------------------------------------------------------
     IF mv_test = abap_false.
-      DELETE FROM /ibp/sosbom_ext WHERE logsys = @mv_target.
+      DELETE FROM /ibp/sosbom_ext WHERE logsys = @c_target.
       lv_del = sy-dbcnt.
       COMMIT WORK AND WAIT.
     ELSE.
       SELECT COUNT(*) FROM /ibp/sosbom_ext
-        WHERE logsys = @mv_target INTO @lv_del.
+        WHERE logsys = @c_target INTO @lv_del.
     ENDIF.
     add_stat( iv_table = '/IBP/SOSBOM_EXT' iv_deleted = lv_del ).
 
     " SOSACT -------------------------------------------------------------
     IF mv_test = abap_false.
-      DELETE FROM /ibp/sosact_ext WHERE logsys = @mv_target.
+      DELETE FROM /ibp/sosact_ext WHERE logsys = @c_target.
       lv_del = sy-dbcnt.
       COMMIT WORK AND WAIT.
     ELSE.
       SELECT COUNT(*) FROM /ibp/sosact_ext
-        WHERE logsys = @mv_target INTO @lv_del.
+        WHERE logsys = @c_target INTO @lv_del.
     ENDIF.
     add_stat( iv_table = '/IBP/SOSACT_EXT' iv_deleted = lv_del ).
   ENDMETHOD.
@@ -226,7 +223,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
       WHEN '/IBP/SOSHEAD_EXT'.
         DATA lt_head TYPE tt_soshead.
         SELECT * FROM /ibp/soshead_ext
-          WHERE logsys = @mv_source
+          WHERE logsys = @c_source
           INTO TABLE @lt_head PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_head ) ).
           dispatch_soshead( lt_head ).
@@ -235,7 +232,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
       WHEN '/IBP/SOSBOM_EXT'.
         DATA lt_bom TYPE tt_sosbom.
         SELECT * FROM /ibp/sosbom_ext
-          WHERE logsys = @mv_source
+          WHERE logsys = @c_source
           INTO TABLE @lt_bom PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_bom ) ).
           dispatch_sosbom( lt_bom ).
@@ -244,7 +241,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
       WHEN '/IBP/SOSACT_EXT'.
         DATA lt_act TYPE tt_sosact.
         SELECT * FROM /ibp/sosact_ext
-          WHERE logsys = @mv_source
+          WHERE logsys = @c_source
           INTO TABLE @lt_act PACKAGE SIZE @mv_pkg.
           add_stat( iv_table = iv_table iv_selected = lines( lt_act ) ).
           dispatch_sosact( lt_act ).
@@ -284,6 +281,9 @@ CLASS lcl_copy_app IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " Honour the configured parallelism cap before dispatching.
+    WAIT UNTIL gv_in_flight < mv_npar UP TO 60 SECONDS.
+
     mv_task_seq = mv_task_seq + 1.
     lv_task     = |{ iv_table }_{ mv_task_seq }|.
 
@@ -293,8 +293,8 @@ CLASS lcl_copy_app IMPLEMENTATION.
         DESTINATION IN GROUP mv_group
         PERFORMING on_end_of_task ON END OF TASK
         EXPORTING
-          iv_source_logsys      = mv_source
-          iv_target_logsys      = mv_target
+          iv_source_logsys      = c_source
+          iv_target_logsys      = c_target
           iv_table              = iv_table
         TABLES
           it_soshead            = it_head
@@ -313,7 +313,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
         WHEN 3.
           " No free work process right now - let running tasks drain,
           " then retry this package.
-          WAIT UNTIL gv_in_flight < mv_free_wp UP TO 5 SECONDS.
+          WAIT UNTIL gv_in_flight < mv_npar UP TO 5 SECONDS.
         WHEN OTHERS.
           add_stat( iv_table = iv_table iv_failed = iv_rows ).
           EXIT.
@@ -356,7 +356,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD display.
-    WRITE: / 'PDS LOGSYS copy', mv_source, '->', mv_target.
+    WRITE: / 'PDS LOGSYS copy', c_source, '->', c_target.
     IF mv_test = abap_true.
       WRITE: '(TEST RUN - no database changes)'.
     ENDIF.
@@ -375,6 +375,38 @@ CLASS lcl_copy_app IMPLEMENTATION.
 ENDCLASS.
 
 *&---------------------------------------------------------------------*
+*& F4 for RFC server group - reads distinct group names from RZLLI
+*&---------------------------------------------------------------------*
+FORM f4_rfc_group CHANGING cv_group TYPE rzlli_apcl.
+  TYPES: BEGIN OF ty_grp,
+           apcl TYPE rzlli-apcl,
+         END OF ty_grp.
+  DATA: lt_grp TYPE TABLE OF ty_grp,
+        lt_ret TYPE TABLE OF ddshretval.
+
+  SELECT DISTINCT apcl FROM rzlli INTO TABLE @lt_grp ORDER BY apcl.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'APCL'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynpfld         = 'P_GROUP'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_grp
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+  IF sy-subrc = 0 AND lt_ret IS NOT INITIAL.
+    cv_group = lt_ret[ 1 ]-fieldval.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
 *& ON END OF TASK callback - SPBT requires a subroutine here.
 *&---------------------------------------------------------------------*
 FORM on_end_of_task USING p_task TYPE clike.
@@ -385,14 +417,9 @@ ENDFORM.
 *& Main
 *&---------------------------------------------------------------------*
 START-OF-SELECTION.
-  IF p_src = p_tgt.
-    MESSAGE 'Source and target logical system must be different' TYPE 'E'.
-  ENDIF.
-
-  go_app = NEW lcl_copy_app( iv_source = p_src
-                             iv_target = p_tgt
-                             iv_group  = p_group
+  go_app = NEW lcl_copy_app( iv_group  = p_group
                              iv_pkg    = p_pkg
+                             iv_npar   = p_npar
                              iv_test   = p_test ).
   go_app->run( ).
 
