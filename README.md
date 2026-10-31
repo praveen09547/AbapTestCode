@@ -53,3 +53,4 @@ committed before any task starts.
   structure references.
 - The caller (report) and the workers run on the same DB, so the up-front
   delete + committed inserts are visible consistently.
+  test readme
