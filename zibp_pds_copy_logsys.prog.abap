@@ -459,37 +459,18 @@ ENDCLASS.
 
 *&---------------------------------------------------------------------*
 *& FORM F4_RFC_GROUP
-*& Provides an F4 value help for P_GROUP by reading the distinct RFC
-*& server group names directly from table RZLLI.  A live read ensures
-*& that any group configured in RZ12 is always shown.
+*& Provides an F4 value help for P_GROUP using the standard SAP
+*& function module RFC_SERVER_GROUP_F4, which reads RFC server group
+*& definitions directly from the system (RZ12) without relying on a
+*& specific database table.
 *&---------------------------------------------------------------------*
 FORM f4_rfc_group CHANGING cv_group TYPE rzlli_apcl.
-  TYPES: BEGIN OF ty_grp,
-           apcl TYPE rzlli-apcl,
-         END OF ty_grp.
-  DATA: lt_grp TYPE TABLE OF ty_grp,
-        lt_ret TYPE TABLE OF ddshretval.
-
-  SELECT DISTINCT apcl FROM rzlli INTO TABLE @lt_grp ORDER BY apcl.
-
-  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
-    EXPORTING
-      retfield        = 'APCL'
-      dynpprog        = sy-repid
-      dynpnr          = sy-dynnr
-      dynpfld         = 'P_GROUP'  "field on the selection screen
-      value_org       = 'S'
-    TABLES
-      value_tab       = lt_grp
-      return_tab      = lt_ret
+  CALL FUNCTION 'RFC_SERVER_GROUP_F4'
+    CHANGING
+      group_name     = cv_group
     EXCEPTIONS
-      parameter_error = 1
-      no_values_found = 2
-      OTHERS          = 3.
-
-  IF sy-subrc = 0 AND lt_ret IS NOT INITIAL.
-    cv_group = lt_ret[ 1 ]-fieldval.
-  ENDIF.
+      user_cancelled = 1
+      OTHERS         = 2.
 ENDFORM.
 
 
