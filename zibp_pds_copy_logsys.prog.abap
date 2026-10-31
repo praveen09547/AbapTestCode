@@ -42,12 +42,6 @@ PARAMETERS:
 SELECTION-SCREEN END OF BLOCK b1.
 
 *&---------------------------------------------------------------------*
-*& F4 help for P_GROUP: reads live RFC server group names from RZLLI
-*&---------------------------------------------------------------------*
-AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_group.
-  PERFORM f4_rfc_group CHANGING p_group.
-
-*&---------------------------------------------------------------------*
 *& Internal table types for the RFC payload
 *& (IBP does not always ship ready-made table types, so we define our
 *&  own to pass data across the RFC boundary to the worker FM.)
@@ -100,7 +94,7 @@ CLASS lcl_copy_app DEFINITION.
           iv_npar   TYPE i
           iv_test   TYPE abap_bool,
 
-      "! Orchestrate the full copy run: init → delete → copy → wait.
+      "! Orchestrate the full copy run: init -> delete -> copy -> wait.
       run,
 
       "! Receive the result of one finished parallel task.
@@ -321,7 +315,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
 
   "The three dispatch methods exist because CALL FUNCTION ... TABLES
   "uses positional matching; passing data via the correct parameter
-  "slot avoids sending empty tables across the RFC boundary.
+  "slot avoids sending empty tables across the RFC boundary unnecessarily.
 
   METHOD dispatch_soshead.
     start_task( iv_table = '/IBP/SOSHEAD_EXT'
@@ -346,7 +340,7 @@ CLASS lcl_copy_app IMPLEMENTATION.
     DATA lv_task TYPE char32.
 
     IF iv_rows = 0.
-      RETURN.   "empty package — nothing to dispatch
+      RETURN.   "empty package - nothing to dispatch
     ENDIF.
 
     IF mv_test = abap_true.
@@ -465,10 +459,9 @@ ENDCLASS.
 
 *&---------------------------------------------------------------------*
 *& FORM F4_RFC_GROUP
-*& Provides an F4 value help for the P_GROUP parameter by reading
-*& the distinct RFC server group names directly from table RZLLI.
-*& Using a live read (rather than a fixed list) ensures that any group
-*& configured in RZ12 is always shown, including customer-specific ones.
+*& Provides an F4 value help for P_GROUP by reading the distinct RFC
+*& server group names directly from table RZLLI.  A live read ensures
+*& that any group configured in RZ12 is always shown.
 *&---------------------------------------------------------------------*
 FORM f4_rfc_group CHANGING cv_group TYPE rzlli_apcl.
   TYPES: BEGIN OF ty_grp,
@@ -503,7 +496,7 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *& FORM ON_END_OF_TASK
 *& SPBT ON END OF TASK callback.  The SPBT framework requires a
-*& subroutine here — method callbacks are not supported.  This FORM
+*& subroutine here - method callbacks are not supported.  This FORM
 *& simply delegates to the application object so that all logic stays
 *& inside the class.
 *&---------------------------------------------------------------------*
@@ -513,10 +506,20 @@ ENDFORM.
 
 
 *&---------------------------------------------------------------------*
+*& AT SELECTION-SCREEN events
+*& Placed after all declarations and class/form definitions because
+*& event keywords open a processing block; any declaration statement
+*& following an event keyword would cause a syntax error.
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_group.
+  PERFORM f4_rfc_group CHANGING p_group.
+
+
+*&---------------------------------------------------------------------*
 *& START-OF-SELECTION
 *&---------------------------------------------------------------------*
 START-OF-SELECTION.
-  "Source and target logical systems are hardcoded (EDI → TDS).
+  "Source and target logical systems are hardcoded (EDI -> TDS).
   "Only rows with ZZAPPL = '1' are processed.
   IF p_npar <= 0.
     MESSAGE 'Number of parallel processes must be at least 1' TYPE 'E'.
