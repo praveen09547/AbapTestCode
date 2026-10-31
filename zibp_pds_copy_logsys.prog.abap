@@ -165,6 +165,15 @@ CLASS lcl_copy_app DEFINITION.
           it_act   TYPE tt_sosact  OPTIONAL
           iv_rows  TYPE i,
 
+      "! Insert one package directly in the caller's LUW (synchronous
+      "! fallback used when the parallel RFC dispatch fails).
+      process_package
+        IMPORTING
+          iv_table TYPE tabname
+          it_head  TYPE tt_soshead OPTIONAL
+          it_bom   TYPE tt_sosbom  OPTIONAL
+          it_act   TYPE tt_sosact  OPTIONAL,
+
       "! Add counts to the statistics entry for iv_table.
       "! Creates the entry on first call for a given table name.
       add_stat
@@ -227,6 +236,12 @@ CLASS lcl_copy_app IMPLEMENTATION.
     IF mv_free_wp <= 0.
       MESSAGE 'No free work processes available for parallel processing'
               TYPE 'E'.
+    ENDIF.
+
+    "Cap P_NPAR to the actual number of free WPs so we never request
+    "more parallel slots than the RFC group can provide.
+    IF mv_npar > mv_free_wp.
+      mv_npar = mv_free_wp.
     ENDIF.
   ENDMETHOD.
 
@@ -410,12 +425,78 @@ CLASS lcl_copy_app IMPLEMENTATION.
           "Wait for a slot to free up, then retry the same package.
           WAIT UNTIL gv_in_flight < mv_npar UP TO 5 SECONDS.
         WHEN OTHERS.
-          "COMMUNICATION_FAILURE or SYSTEM_FAILURE: unrecoverable for
-          "this package; record the loss and move on.
-          add_stat( iv_table = iv_table iv_failed = iv_rows ).
+          "RFC dispatch failed (communication_failure or system_failure).
+          "Fall back to synchronous inline insert in the caller's LUW
+          "so the package is not lost.
+          process_package( iv_table = iv_table
+                           it_head  = it_head
+                           it_bom   = it_bom
+                           it_act   = it_act ).
           EXIT.
       ENDCASE.
     ENDDO.
+  ENDMETHOD.
+
+
+  METHOD process_package.
+    "Mirrors the worker FM logic but executes in the main program's LUW.
+    "Invoked when the parallel RFC dispatch fails so inserts still happen.
+    DATA lv_ins TYPE i.
+
+    CASE iv_table.
+
+      WHEN '/IBP/SOSHEAD_EXT'.
+        DATA lt_head LIKE it_head.
+        lt_head = it_head.   "local copy so we do not modify the caller's table
+        LOOP AT lt_head ASSIGNING FIELD-SYMBOL(<h>).
+          <h>-logsys = c_target.
+        ENDLOOP.
+        IF lt_head IS NOT INITIAL.
+          INSERT /ibp/soshead_ext FROM TABLE @lt_head.
+          IF sy-subrc <> 0.
+            ROLLBACK WORK.
+            add_stat( iv_table = iv_table iv_failed = lines( lt_head ) ).
+            RETURN.
+          ENDIF.
+          lv_ins = lines( lt_head ).
+        ENDIF.
+
+      WHEN '/IBP/SOSBOM_EXT'.
+        DATA lt_bom LIKE it_bom.
+        lt_bom = it_bom.
+        LOOP AT lt_bom ASSIGNING FIELD-SYMBOL(<b>).
+          <b>-logsys = c_target.
+        ENDLOOP.
+        IF lt_bom IS NOT INITIAL.
+          INSERT /ibp/sosbom_ext FROM TABLE @lt_bom.
+          IF sy-subrc <> 0.
+            ROLLBACK WORK.
+            add_stat( iv_table = iv_table iv_failed = lines( lt_bom ) ).
+            RETURN.
+          ENDIF.
+          lv_ins = lines( lt_bom ).
+        ENDIF.
+
+      WHEN '/IBP/SOSACT_EXT'.
+        DATA lt_act LIKE it_act.
+        lt_act = it_act.
+        LOOP AT lt_act ASSIGNING FIELD-SYMBOL(<a>).
+          <a>-logsys = c_target.
+        ENDLOOP.
+        IF lt_act IS NOT INITIAL.
+          INSERT /ibp/sosact_ext FROM TABLE @lt_act.
+          IF sy-subrc <> 0.
+            ROLLBACK WORK.
+            add_stat( iv_table = iv_table iv_failed = lines( lt_act ) ).
+            RETURN.
+          ENDIF.
+          lv_ins = lines( lt_act ).
+        ENDIF.
+
+    ENDCASE.
+
+    COMMIT WORK AND WAIT.
+    add_stat( iv_table = iv_table iv_inserted = lv_ins ).
   ENDMETHOD.
 
 
